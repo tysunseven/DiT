@@ -62,7 +62,7 @@ def main(args):
         model.forward_with_cfg, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
     )
     samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-    samples = vae.decode(samples / 0.18215).sample
+    # samples = vae.decode(samples / 0.18215).sample
 
     # Save and display images:
     save_image(samples, "sample.png", nrow=4, normalize=True, value_range=(-1, 1))

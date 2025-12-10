@@ -36,6 +36,22 @@ from diffusers.models import AutoencoderKL
 #                             Training Helper Functions                         #
 #################################################################################
 
+class AcousticDataset(torch.utils.data.Dataset):
+    def __init__(self, structure_path, target_path):
+        self.structures = np.load(structure_path) # [N, 1, 8, 8]
+        self.targets = np.load(target_path)       # [N, 2]
+        
+        # 归一化结构到 [-1, 1]
+        self.structures = torch.from_numpy(self.structures).float() * 2 - 1
+        self.targets = torch.from_numpy(self.targets).float()
+
+    def __len__(self):
+        return len(self.structures)
+
+    def __getitem__(self, idx):
+        return self.structures[idx], self.targets[idx]
+
+
 @torch.no_grad()
 def update_ema(ema_model, model, decay=0.9999):
     """
@@ -138,7 +154,8 @@ def main(args):
 
     # Create model:
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
-    latent_size = args.image_size // 8
+    # latent_size = args.image_size // 8
+    latent_size = args.image_size # (直接是8)
     model = DiT_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes
@@ -148,7 +165,7 @@ def main(args):
     requires_grad(ema, False)
     model = DDP(model.to(device), device_ids=[rank])
     diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule
-    vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
+    # vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
@@ -161,7 +178,8 @@ def main(args):
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
     ])
-    dataset = ImageFolder(args.data_path, transform=transform)
+    # dataset = ImageFolder(args.data_path, transform=transform)
+    dataset = AcousticDataset(args.structure_path, args.target_path)
     sampler = DistributedSampler(
         dataset,
         num_replicas=dist.get_world_size(),
@@ -198,9 +216,9 @@ def main(args):
         for x, y in loader:
             x = x.to(device)
             y = y.to(device)
-            with torch.no_grad():
-                # Map input images to latent space + normalize latents:
-                x = vae.encode(x).latent_dist.sample().mul_(0.18215)
+            # with torch.no_grad():
+            #     # Map input images to latent space + normalize latents:
+            #     x = vae.encode(x).latent_dist.sample().mul_(0.18215)
             t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
             model_kwargs = dict(y=y)
             loss_dict = diffusion.training_losses(model, x, t, model_kwargs)

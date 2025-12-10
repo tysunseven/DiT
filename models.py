@@ -93,6 +93,22 @@ class LabelEmbedder(nn.Module):
         embeddings = self.embedding_table(labels)
         return embeddings
 
+# 用于替换 LabelEmbedder 的新类，处理连续标签（实部和虚部）
+class ContinuousEmbedder(nn.Module):
+    def __init__(self, input_dim, hidden_size, dropout_prob):
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+        # 如果需要 CFG (Classifier-Free Guidance)，可以在这里实现 dropout 逻辑
+        # 简单起见，训练时以 dropout_prob 的概率将输入置为 0 (代表无条件)
+
+    def forward(self, labels, train, force_drop_ids=None):
+        # labels: [Batch, 2] (实部, 虚部)
+        embeddings = self.mlp(labels)
+        return embeddings
 
 #################################################################################
 #                                 Core DiT Model                                #
@@ -116,6 +132,8 @@ class DiTBlock(nn.Module):
         )
 
     def forward(self, x, c):
+        # MSA 是 Multi-Head Self-Attention 的缩写，MLP 是 Multi-Layer Perceptron 的缩写
+        # shift_msa 等六个参数其实是和 c 等长的向量，是 c 经过激活函数和线性变换后的结果
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.adaLN_modulation(c).chunk(6, dim=1)
         x = x + gate_msa.unsqueeze(1) * self.attn(modulate(self.norm1(x), shift_msa, scale_msa))
         x = x + gate_mlp.unsqueeze(1) * self.mlp(modulate(self.norm2(x), shift_mlp, scale_mlp))
@@ -148,9 +166,9 @@ class DiT(nn.Module):
     """
     def __init__(
         self,
-        input_size=32,
-        patch_size=2,
-        in_channels=4,
+        input_size=8, # 我将输入图片尺寸从32改为8，因为声学超材料输入的图片是8x8的
+        patch_size=1, # 我将patch_size改为1，因为声学超材料输入的图片是8x8的已经很小了
+        in_channels=1, # 我将输入通道数从4改为1，因为声学超材料输入的图片是单通道的
         hidden_size=1152,
         depth=28,
         num_heads=16,
@@ -168,7 +186,8 @@ class DiT(nn.Module):
 
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
-        self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
+        # self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
+        self.y_embedder = ContinuousEmbedder(input_dim=2, hidden_size=hidden_size, dropout_prob=class_dropout_prob)
         num_patches = self.x_embedder.num_patches
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
@@ -234,6 +253,9 @@ class DiT(nn.Module):
         """
         Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
+        N: batch size C: number of channels H: height W: width
+        C 是数据的特征维度（深度），普通彩色图片是3，而声学超材料情形应该是1
+        所以我应该去上面将 in_channels 设为1
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
         """
@@ -361,10 +383,14 @@ def DiT_S_4(**kwargs):
 def DiT_S_8(**kwargs):
     return DiT(depth=12, hidden_size=384, patch_size=8, num_heads=6, **kwargs)
 
+def DiT_Tiny(**kwargs):
+    # hidden_size=64, depth=6 左右即可，避免过拟合
+    return DiT(depth=6, hidden_size=64, patch_size=1, num_heads=4, **kwargs)
 
 DiT_models = {
     'DiT-XL/2': DiT_XL_2,  'DiT-XL/4': DiT_XL_4,  'DiT-XL/8': DiT_XL_8,
     'DiT-L/2':  DiT_L_2,   'DiT-L/4':  DiT_L_4,   'DiT-L/8':  DiT_L_8,
     'DiT-B/2':  DiT_B_2,   'DiT-B/4':  DiT_B_4,   'DiT-B/8':  DiT_B_8,
     'DiT-S/2':  DiT_S_2,   'DiT-S/4':  DiT_S_4,   'DiT-S/8':  DiT_S_8,
+    'DiT-Tiny': DiT_Tiny,
 }
