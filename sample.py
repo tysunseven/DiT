@@ -8,6 +8,8 @@
 Sample new images from a pre-trained DiT.
 """
 import torch
+import torch.nn.functional as F  # <--- 新增这一行
+import time
 import os
 import numpy as np  # <--- 必须加上这一行！
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -22,7 +24,16 @@ import argparse
 
 def main(args):
     # Setup PyTorch:
-    torch.manual_seed(args.seed)
+    # ------------------- 修改开始 -------------------
+    # 如果命令行没有指定特殊的种子(默认0)，则使用当前时间作为种子
+    if args.seed == 0:
+        seed = int(time.time()) % 1000000
+    else:
+        seed = args.seed
+        
+    print(f"Current Random Seed: {seed}") # 打印出来，万一生成了好结果，下次还能用这个种子复现
+    torch.manual_seed(seed)
+    # ------------------- 修改结束 -------------------
     torch.set_grad_enabled(False)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -59,7 +70,7 @@ def main(args):
 
 
     # 构造 batch 条件向量
-    n = 4 # 生成样本数量
+    n = 1 # 生成样本数量
     # 创建一个 [1, 2] 的向量，然后复制 n 份变成 [n, 2]
     target_tensor = torch.tensor([target_real, target_imag], device=device).float()
     y = target_tensor.unsqueeze(0).repeat(n, 1)
@@ -128,8 +139,18 @@ def main(args):
     # 保存可视化图片
     try:
         from torchvision.utils import save_image
-        save_image(samples, save_path_img, nrow=int(n**0.5), normalize=True, value_range=(-1, 1))
-        print(f"  -> {save_path_img}")
+        
+        # ------------------- 修改开始 -------------------
+        # 1. 放大图片: 使用 'nearest' 模式进行 32 倍放大 (8x8 -> 256x256)
+        # 这样能保持像素的锐利边缘，不会变模糊
+        samples_vis = F.interpolate(samples, scale_factor=32, mode='nearest')
+        
+        # 2. 保存放大后的图片
+        # 依然保留你的“黑白反转”逻辑 (-samples_vis)
+        save_image(-samples_vis, save_path_img, nrow=int(n**0.5), normalize=True, value_range=(-1, 1))
+        # ------------------- 修改结束 -------------------
+        
+        print(f"  -> {save_path_img} (已放大便于查看)")
     except ImportError:
         pass
 
