@@ -170,7 +170,7 @@ class DiT(nn.Module):
         patch_size=1, # 我将patch_size改为1，因为声学超材料输入的图片是8x8的已经很小了
         in_channels=1, # 我将输入通道数从4改为1，因为声学超材料输入的图片是单通道的
         hidden_size=1152,
-        depth=28,
+        depth=28, # 决定单个DiT类中堆叠了多少个DiTBlock模块
         num_heads=16,
         mlp_ratio=4.0,
         class_dropout_prob=0.1,
@@ -192,6 +192,9 @@ class DiT(nn.Module):
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
 
+        # range(depth)：创建一个从 0 到 depth-1 的迭代器
+        # _ 是一个占位符变量名，表示我们在循环中并不关心当前的索引值，只是单纯地想重复执行创建操作
+        # nn.ModuleList 会将列表中所有的 DiTBlock 自动注册为模型的子模块
         self.blocks = nn.ModuleList([
             DiTBlock(hidden_size, num_heads, mlp_ratio=mlp_ratio) for _ in range(depth)
         ])
@@ -217,7 +220,7 @@ class DiT(nn.Module):
         nn.init.constant_(self.x_embedder.proj.bias, 0)
 
         # Initialize label embedding table:
-        nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
+        # nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
 
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
@@ -383,7 +386,7 @@ def DiT_S_4(**kwargs):
 def DiT_S_8(**kwargs):
     return DiT(depth=12, hidden_size=384, patch_size=8, num_heads=6, **kwargs)
 
-def DiT_Tiny(**kwargs):
+def DiT_Tiny1(**kwargs):
     # hidden_size=64, depth=6 左右即可，避免过拟合
     return DiT(depth=6, hidden_size=64, patch_size=1, num_heads=4, **kwargs)
 
@@ -392,5 +395,5 @@ DiT_models = {
     'DiT-L/2':  DiT_L_2,   'DiT-L/4':  DiT_L_4,   'DiT-L/8':  DiT_L_8,
     'DiT-B/2':  DiT_B_2,   'DiT-B/4':  DiT_B_4,   'DiT-B/8':  DiT_B_8,
     'DiT-S/2':  DiT_S_2,   'DiT-S/4':  DiT_S_4,   'DiT-S/8':  DiT_S_8,
-    'DiT-Tiny': DiT_Tiny,
+    'DiT-Tiny1': DiT_Tiny1,
 }

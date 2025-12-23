@@ -26,6 +26,7 @@ from time import time
 import argparse
 import logging
 import os
+from datetime import datetime
 
 from models import DiT_models
 from diffusion import create_diffusion
@@ -38,11 +39,19 @@ from diffusers.models import AutoencoderKL
 
 class AcousticDataset(torch.utils.data.Dataset):
     def __init__(self, structure_path, target_path):
-        self.structures = np.load(structure_path) # [N, 1, 8, 8]
-        self.targets = np.load(target_path)       # [N, 2]
+        self.structures = np.load(structure_path) 
+        self.targets = np.load(target_path)       
         
+        self.structures = torch.from_numpy(self.structures).float()
+        
+        # ------------------- 新增代码开始 -------------------
+        # 检查维度：如果是 [N, 8, 8]，自动补齐为 [N, 1, 8, 8]
+        if self.structures.ndim == 3:
+            self.structures = self.structures.unsqueeze(1)
+        # ------------------- 新增代码结束 -------------------
+
         # 归一化结构到 [-1, 1]
-        self.structures = torch.from_numpy(self.structures).float() * 2 - 1
+        self.structures = self.structures * 2 - 1
         self.targets = torch.from_numpy(self.targets).float()
 
     def __len__(self):
@@ -130,7 +139,17 @@ def main(args):
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
 
     # Setup DDP:
-    dist.init_process_group("nccl")
+    # dist.init_process_group("nccl")
+    # dist.init_process_group("gloo")  # <--- 改为 "gloo"
+    # ------------------- 修改开始 -------------------
+    # 使用本地文件进行初始化，彻底避开 Windows 环境变量和网络通信的麻烦
+    dist.init_process_group(
+        backend="gloo", 
+        init_method="file:///C:/Users/Administrator/Documents/DiT/dist_lock_file", 
+        rank=0, 
+        world_size=1
+    )
+    # ------------------- 修改结束 -------------------
     assert args.global_batch_size % dist.get_world_size() == 0, f"Batch size must be divisible by world size."
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
@@ -140,13 +159,33 @@ def main(args):
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
 
     # Setup an experiment folder:
-    if rank == 0:
+    if rank == 0: # 如果是主进程
+        # 检查文件夹 args.results_dir 是否存在，不存在则创建
         os.makedirs(args.results_dir, exist_ok=True)  # Make results folder (holds all experiment subfolders)
-        experiment_index = len(glob(f"{args.results_dir}/*"))
-        model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
-        experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"  # Create an experiment folder
+        # 计算当前 results 目录下已经有了多少个文件夹
+        # experiment_index = len(glob(f"{args.results_dir}/*"))
+        # # 字符串处理，文件系统路径里不能包含 / 字符，所以把它们替换为 -
+        # model_string_name = args.model.replace("/", "-")  # e.g., DiT-XL/2 --> DiT-XL-2 (for naming folders)
+        # # 拼接本次实验的专属路径，形如 results/000-DiT-XL-2
+        # experiment_dir = f"{args.results_dir}/{experiment_index:03d}-{model_string_name}"  # Create an experiment folder
+        # ------------------- 修改开始 -------------------
+        # 1. 获取当前时间戳 (例如: 20251223-143005)
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        
+        # 2. 处理模型名称 (把 / 换成 -)
+        model_string_name = args.model.replace("/", "-")
+        
+        # 3. 构造文件夹名: 数据集-模型-时间戳 (按照你指定的顺序)
+        # 例如: results/08-data-01_DiT-Tiny_20251223-143005
+        experiment_name = f"{args.dataset}_{model_string_name}_{timestamp}"
+
+        experiment_dir = f"{args.results_dir}/{experiment_name}"
+        # ------------------- 修改结束 -------------------
+        # 在实验文件夹内部再定义一个 checkpoints 子目录，专门用来放后面训练产生的 .pt 权重文件
         checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
         os.makedirs(checkpoint_dir, exist_ok=True)
+        # 主进程的 logger 会既把信息打印到屏幕，又把信息写入到 experiment_dir/log.txt 文件中
+        # create_logger 函数定义在本文件的上方，是自定义的一个函数
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
     else:
@@ -156,6 +195,10 @@ def main(args):
     assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     # latent_size = args.image_size // 8
     latent_size = args.image_size # (直接是8)
+    # DiT_models 是在 models.py 文件末尾定义的一个 Python 字典 (dict)
+    # 它的键 (Key) 是字符串，比如 "DiT-XL/2" 或 "DiT-B/4"
+    # 它的值 (Value) 并不是字符串，而是 函数对象（构造函数）
+    # 紧跟在字典取值后的括号 (...) 代表调用刚才取出的那个函数
     model = DiT_models[args.model](
         input_size=latent_size,
         num_classes=args.num_classes
@@ -165,6 +208,10 @@ def main(args):
     requires_grad(ema, False)
     model = DDP(model.to(device), device_ids=[rank])
     diffusion = create_diffusion(timestep_respacing="")  # default: 1000 steps, linear noise schedule
+    # 加载一个 vae 的预训练模型，该模型是在图像数据集上训练的，要求输入的图像的通道数为3（RGB图像），返回的通道数为4
+    # 对输入图片的宽高没有定死，只要求能被8整除，因为该 vae 中固定的下采样倍率是8
+    # vae 是用于将原始图像压缩到潜空间，处理更短的序列，节省显存并提高计算速度
+    # 但因为我们这里的任务不是标准的图像数据集的任务，通道数也不是3，维度本身也很小，所以我们不使用 vae
     # vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -179,7 +226,20 @@ def main(args):
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
     ])
     # dataset = ImageFolder(args.data_path, transform=transform)
-    dataset = AcousticDataset(args.structure_path, args.target_path)
+    # dataset = AcousticDataset(args.structure_path, args.target_path)
+    # ------------------- 修改开始 -------------------
+    # 根据传入的 dataset 参数自动拼接路径
+    # 例如：data/08-data-01/surrogate_structures.npy
+    structure_path = os.path.join("data", args.dataset, "structures.npy")
+    target_path = os.path.join("data", args.dataset, "properties.npy")
+
+    # 检查一下文件是否存在，防止拼写错误
+    if not os.path.exists(structure_path) or not os.path.exists(target_path):
+        raise FileNotFoundError(f"Data files not found in data/{args.dataset}/. Please check the folder name.")
+
+    dataset = AcousticDataset(structure_path, target_path)
+    logger.info(f"Dataset loaded from: data/{args.dataset}")
+    # ------------------- 修改结束 -------------------
     sampler = DistributedSampler(
         dataset,
         num_replicas=dist.get_world_size(),
@@ -196,7 +256,9 @@ def main(args):
         pin_memory=True,
         drop_last=True
     )
-    logger.info(f"Dataset contains {len(dataset):,} images ({args.data_path})")
+    # logger.info(f"Dataset contains {len(dataset):,} images ({args.data_path})")
+    # logger.info(f"Dataset contains {len(dataset):,} samples ({args.structure_path})")
+    logger.info(f"Dataset contains {len(dataset):,} samples (from {args.dataset})")
 
     # Prepare models for training:
     update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
@@ -216,10 +278,20 @@ def main(args):
         for x, y in loader:
             x = x.to(device)
             y = y.to(device)
+            # vae.encode(x) 输入图像 x，形状如 (N, 3, 256, 256)，返回一个分布对象
+            # .latent_dist 得到这个分布对象，sample() 从中采样得到潜空间表示
+            # 再通过 .mul_(0.18215) 进行缩放，得到最终的潜空间表示
             # with torch.no_grad():
             #     # Map input images to latent space + normalize latents:
             #     x = vae.encode(x).latent_dist.sample().mul_(0.18215)
+            # torch.randint(low, high, size, ...) 是 PyTorch 生成随机整数的函数
+            # 这里 0 是下限（包含），diffusion.num_timesteps 是上限（不包含）
+            # x.shape[0] 是当前 Batch 的大小（Batch Size）。这意味着我们为 Batch 里的每一张图都独立挑选一个不同的 $t$。
+            # device=device: 确保生成的 $t$ 直接位于 GPU 上，方便后续计算
             t = torch.randint(0, diffusion.num_timesteps, (x.shape[0],), device=device)
+            # 因为本代码仓库基于 OpenAI 的 guided-diffusion 仓库修改而来
+            # 所以 training_losses() 函数的最后一个参数是 model_kwargs 字典，旨在支持各种模型
+            # 所以这里把 y 打包进字典而不是在函数签名中直接传递
             model_kwargs = dict(y=y)
             loss_dict = diffusion.training_losses(model, x, t, model_kwargs)
             loss = loss_dict["loss"].mean()
@@ -270,13 +342,16 @@ def main(args):
 
 if __name__ == "__main__":
     # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
+    # 使用 argparse.ArgumentParser() 创建了一个参数解析器
     parser = argparse.ArgumentParser()
     # parser.add_argument("--data-path", type=str, required=True)
-    parser.add_argument("--structure-path", type=str, required=True, help="Path to structures.npy")
-    parser.add_argument("--target-path", type=str, required=True, help="Path to targets.npy")
+    # parser.add_argument("--structure-path", type=str, default="data/surrogate_structures.npy", help="Path to structures.npy")
+    # parser.add_argument("--target-path", type=str, default="data/surrogate_properties.npy", help="Path to targets.npy")
+    parser.add_argument("--dataset", type=str, default="08-data-01", 
+                        help="Name of the dataset folder in ./data/ (e.g., 08-data-01)")
     parser.add_argument("--results-dir", type=str, default="results")
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-XL/2")
-    parser.add_argument("--image-size", type=int, choices=[256, 512], default=256)
+    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-Tiny1")
+    parser.add_argument("--image-size", type=int, choices=[256, 512, 8], default=8)
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
@@ -285,5 +360,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=50_000)
+    # 读取在终端输入命令时跟在脚本后面的那些参数，并将它们打包成一个名为 args 的对象
     args = parser.parse_args()
     main(args)
