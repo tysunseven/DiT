@@ -93,20 +93,51 @@ class LabelEmbedder(nn.Module):
         embeddings = self.embedding_table(labels)
         return embeddings
 
-# 用于替换 LabelEmbedder 的新类，处理连续标签（实部和虚部）
+# # 用于替换 LabelEmbedder 的新类，处理连续标签（实部和虚部）
+# class ContinuousEmbedder(nn.Module):
+#     def __init__(self, input_dim, hidden_size, dropout_prob):
+#         super().__init__()
+#         self.mlp = nn.Sequential(
+#             nn.Linear(input_dim, hidden_size),
+#             nn.SiLU(),
+#             nn.Linear(hidden_size, hidden_size),
+#         )
+#         # 如果需要 CFG (Classifier-Free Guidance)，可以在这里实现 dropout 逻辑
+#         # 简单起见，训练时以 dropout_prob 的概率将输入置为 0 (代表无条件)
+
+#     def forward(self, labels, train, force_drop_ids=None):
+#         # labels: [Batch, 2] (实部, 虚部)
+#         embeddings = self.mlp(labels)
+#         return embeddings
+
+# [修改] 替换原来的 ContinuousEmbedder 类
 class ContinuousEmbedder(nn.Module):
     def __init__(self, input_dim, hidden_size, dropout_prob):
         super().__init__()
+        self.dropout_prob = dropout_prob  # 记录 dropout 概率
         self.mlp = nn.Sequential(
             nn.Linear(input_dim, hidden_size),
             nn.SiLU(),
             nn.Linear(hidden_size, hidden_size),
         )
-        # 如果需要 CFG (Classifier-Free Guidance)，可以在这里实现 dropout 逻辑
-        # 简单起见，训练时以 dropout_prob 的概率将输入置为 0 (代表无条件)
 
     def forward(self, labels, train, force_drop_ids=None):
-        # labels: [Batch, 2] (实部, 虚部)
+        # 1. 判断是否需要执行 Dropout
+        use_dropout = self.dropout_prob > 0
+        
+        if (train and use_dropout) or (force_drop_ids is not None):
+            if force_drop_ids is None:
+                # 训练时：以 dropout_prob 的概率随机生成 mask
+                drop_ids = torch.rand(labels.shape[0], device=labels.device) < self.dropout_prob
+            else:
+                # 推理时：强制指定哪些需要丢弃
+                drop_ids = force_drop_ids == 1
+            
+            # 2. 执行 Mask：将需要丢弃的标签设为全 0
+            # unsqueeze(1) 是为了广播到 (Batch, 2)
+            labels = torch.where(drop_ids.unsqueeze(1), torch.zeros_like(labels), labels)
+
+        # 3. 经过 MLP 得到 Embedding
         embeddings = self.mlp(labels)
         return embeddings
 
@@ -284,7 +315,10 @@ class DiT(nn.Module):
         # three channels by default. The standard approach to cfg applies it to all channels.
         # This can be done by uncommenting the following line and commenting-out the line following that.
         # eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
-        eps, rest = model_out[:, :3], model_out[:, 3:]
+        # eps, rest = model_out[:, :3], model_out[:, 3:]
+        # [修改] 使用 self.in_channels (通常是1) 而不是硬编码的 3
+        # model_out 的前半部分是预测的噪声 (eps)，后半部分是方差 (rest, 如果 learn_sigma=True)
+        eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
         eps = torch.cat([half_eps, half_eps], dim=0)

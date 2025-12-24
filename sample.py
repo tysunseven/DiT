@@ -76,27 +76,55 @@ def main(args):
     y = target_tensor.unsqueeze(0).repeat(n, 1)
     z = torch.randn(n, 1, latent_size, latent_size, device=device)
 
-    # Create sampling noise:
-    # n = len(class_labels)
-    # z = torch.randn(n, 4, latent_size, latent_size, device=device)
-    # y = torch.tensor(class_labels, device=device)
+    # # Create sampling noise:
+    # # n = len(class_labels)
+    # # z = torch.randn(n, 4, latent_size, latent_size, device=device)
+    # # y = torch.tensor(class_labels, device=device)
+
+    # # Setup classifier-free guidance:
+    # # z = torch.cat([z, z], 0)
+    # # y_null = torch.tensor([1000] * n, device=device)
+    # # y = torch.cat([y, y_null], 0)
+    # # model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
+    # model_kwargs = dict(y=y)
+
+    # # Sample images:
+    # # samples = diffusion.p_sample_loop(
+    # #     model.forward_with_cfg, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
+    # # )
+    # # samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
+    # # samples = vae.decode(samples / 0.18215).sample
+    # samples = diffusion.p_sample_loop(
+    #     model.forward, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
+    # )
 
     # Setup classifier-free guidance:
-    # z = torch.cat([z, z], 0)
-    # y_null = torch.tensor([1000] * n, device=device)
-    # y = torch.cat([y, y_null], 0)
-    # model_kwargs = dict(y=y, cfg_scale=args.cfg_scale)
-    model_kwargs = dict(y=y)
+    # 1. 只有当 cfg_scale > 1.0 时才启用 CFG，否则保持原样
+    if args.cfg_scale > 1.0:
+        # 双倍噪声输入 (一半给条件生成，一半给无条件生成)
+        z = torch.cat([z, z], 0)
+        
+        # 构造空条件 y_null (全0向量，对应 ContinuousEmbedder 里的 mask 逻辑)
+        y_null = torch.zeros_like(y)
+        
+        # 拼接条件: [有条件, 无条件]
+        y_combined = torch.cat([y, y_null], 0)
+        
+        model_kwargs = dict(y=y_combined, cfg_scale=args.cfg_scale)
+        sample_fn = model.forward_with_cfg
+    else:
+        # 普通采样
+        model_kwargs = dict(y=y)
+        sample_fn = model.forward
 
     # Sample images:
-    # samples = diffusion.p_sample_loop(
-    #     model.forward_with_cfg, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
-    # )
-    # samples, _ = samples.chunk(2, dim=0)  # Remove null class samples
-    # samples = vae.decode(samples / 0.18215).sample
     samples = diffusion.p_sample_loop(
-        model.forward, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
+        sample_fn, z.shape, z, clip_denoised=False, model_kwargs=model_kwargs, progress=True, device=device
     )
+
+    # 如果使用了 CFG，输出是双倍的，需要切分取前半部分
+    if args.cfg_scale > 1.0:
+        samples, _ = samples.chunk(2, dim=0)
 
     # 7. 准备保存路径
     ckpt_abs_path = os.path.abspath(args.ckpt)
@@ -143,7 +171,7 @@ def main(args):
         # ------------------- 修改开始 -------------------
         # 1. 放大图片: 使用 'nearest' 模式进行 32 倍放大 (8x8 -> 256x256)
         # 这样能保持像素的锐利边缘，不会变模糊
-        samples_vis = F.interpolate(samples, scale_factor=32, mode='nearest')
+        samples_vis = F.interpolate(samples, size=256, mode='nearest')
         
         # 2. 保存放大后的图片
         # 依然保留你的“黑白反转”逻辑 (-samples_vis)

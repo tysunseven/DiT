@@ -351,7 +351,7 @@ if __name__ == "__main__":
                         help="Name of the dataset folder in ./data/ (e.g., 08-data-01)")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-Tiny1")
-    parser.add_argument("--image-size", type=int, choices=[256, 512, 8], default=8)
+    parser.add_argument("--image-size", type=int, default=8)
     parser.add_argument("--num-classes", type=int, default=1000)
     parser.add_argument("--epochs", type=int, default=1400)
     parser.add_argument("--global-batch-size", type=int, default=256)
