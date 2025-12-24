@@ -135,7 +135,17 @@ class ContinuousEmbedder(nn.Module):
             
             # 2. 执行 Mask：将需要丢弃的标签设为全 0
             # unsqueeze(1) 是为了广播到 (Batch, 2)
-            labels = torch.where(drop_ids.unsqueeze(1), torch.zeros_like(labels), labels)
+            # labels = torch.where(drop_ids.unsqueeze(1), torch.zeros_like(labels), labels)
+
+            # ---------------- 修改开始 ----------------
+            # 2. 执行 Mask：将需要丢弃的标签设为 [2.0, 2.0]
+            # 这种“不可能出现的物理参数”会被模型识别为无条件信号
+            null_token = torch.tensor([2.0, 2.0], device=labels.device, dtype=labels.dtype)
+            
+            # 使用 torch.where 进行替换
+            # drop_ids.unsqueeze(1) 形状是 [B, 1]，null_token 会自动广播到 [B, 2]
+            labels = torch.where(drop_ids.unsqueeze(1), null_token, labels)
+            # ---------------- 修改结束 ----------------
 
         # 3. 经过 MLP 得到 Embedding
         embeddings = self.mlp(labels)

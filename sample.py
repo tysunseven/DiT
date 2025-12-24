@@ -104,8 +104,12 @@ def main(args):
         # 双倍噪声输入 (一半给条件生成，一半给无条件生成)
         z = torch.cat([z, z], 0)
         
-        # 构造空条件 y_null (全0向量，对应 ContinuousEmbedder 里的 mask 逻辑)
-        y_null = torch.zeros_like(y)
+        # # 构造空条件 y_null (全0向量，对应 ContinuousEmbedder 里的 mask 逻辑)
+        # y_null = torch.zeros_like(y)
+
+        # 构造空条件 y_null (使用 [2.0, 2.0] 作为无条件信号)
+        # 注意：这里创建一个 [1, 2] 的向量然后扩展到和 y 一样的形状
+        y_null = torch.tensor([[2.0, 2.0]], device=device).repeat(y.shape[0], 1)
         
         # 拼接条件: [有条件, 无条件]
         y_combined = torch.cat([y, y_null], 0)
