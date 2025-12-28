@@ -263,6 +263,14 @@ class DiT(nn.Module):
         # Initialize label embedding table:
         # nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
 
+        # [修改] Initialize continuous label embedder (MLP):
+        # 遍历 ContinuousEmbedder 中的所有线性层进行初始化
+        for module in self.y_embedder.mlp:
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, std=0.02)
+                if module.bias is not None:
+                    nn.init.constant_(module.bias, 0)
+
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)
         nn.init.normal_(self.t_embedder.mlp[2].weight, std=0.02)
