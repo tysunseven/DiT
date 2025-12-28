@@ -248,10 +248,16 @@ def main(args):
         # n_samples_total = len(test_targets_expanded)
         z = torch.randn(len(test_targets_expanded), 1, image_size, image_size, device=device)
         y = test_targets_expanded
-        
+        n_samples = len(test_targets_expanded)
+
+        # Setup CFG (Classifier-Free Guidance)
         if DEFAULT_CFG_SCALE > 1.0:
             z = torch.cat([z, z], 0)
-            y_null = torch.zeros_like(y) 
+            
+            # [修正] 必须使用 [2.0, 2.0] 作为 Null Token，与 training/sample 保持一致
+            # 创建一个 [1, 2] 的向量然后复制 n_samples 份
+            y_null = torch.tensor([[2.0, 2.0]], device=device).repeat(n_samples, 1)
+            
             y_combined = torch.cat([y, y_null], 0)
             model_kwargs = dict(y=y_combined, cfg_scale=DEFAULT_CFG_SCALE)
             sample_fn = model.forward_with_cfg
