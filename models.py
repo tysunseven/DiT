@@ -151,6 +151,45 @@ class ContinuousEmbedder(nn.Module):
         embeddings = self.mlp(labels)
         return embeddings
 
+# 1. [新增] LearnableContinuousEmbedder 类
+class LearnableContinuousEmbedder(nn.Module):
+    """
+    使用独立的可学习参数 (nn.Parameter) 作为 Null Embedding，
+    而不是将 [2, 2] 输入 MLP。
+    """
+    def __init__(self, input_dim, hidden_size, dropout_prob):
+        super().__init__()
+        self.dropout_prob = dropout_prob
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+        # [核心] 这是一个独立的向量，不依赖 MLP
+        self.null_embedding = nn.Parameter(torch.randn(1, hidden_size))
+
+    def forward(self, labels, train, force_drop_ids=None):
+        # A. 先计算所有物理条件的 Embedding
+        embeddings = self.mlp(labels)
+
+        # B. 计算 Dropout Mask
+        use_dropout = self.dropout_prob > 0
+        if (train and use_dropout) or (force_drop_ids is not None):
+            if force_drop_ids is None:
+                drop_ids = torch.rand(labels.shape[0], device=labels.device) < self.dropout_prob
+            else:
+                drop_ids = force_drop_ids == 1
+            
+            # C. [替换逻辑] 直接用 null_embedding 替换掉对应的行
+            if drop_ids.any():
+                embeddings = torch.where(
+                    drop_ids.unsqueeze(1), 
+                    self.null_embedding.to(embeddings.dtype), 
+                    embeddings
+                )
+        return embeddings
+
+
 #################################################################################
 #                                 Core DiT Model                                #
 #################################################################################
@@ -217,6 +256,7 @@ class DiT(nn.Module):
         class_dropout_prob=0.1,
         num_classes=1000,
         learn_sigma=True,
+        learnable_null=False,  # <--- [新增参数] 默认为 False，保证向后兼容
     ):
         super().__init__()
         self.learn_sigma = learn_sigma
@@ -228,7 +268,13 @@ class DiT(nn.Module):
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
         # self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
-        self.y_embedder = ContinuousEmbedder(input_dim=2, hidden_size=hidden_size, dropout_prob=class_dropout_prob)
+        # [修改] 根据参数选择使用哪个 Embedder
+        if learnable_null:
+            print(" [Model] Using Learnable Null Embedding (New Scheme)")
+            self.y_embedder = LearnableContinuousEmbedder(input_dim=2, hidden_size=hidden_size, dropout_prob=class_dropout_prob)
+        else:
+            print(" [Model] Using Fixed Null Input [2, 2] (Legacy Scheme)")
+            self.y_embedder = ContinuousEmbedder(input_dim=2, hidden_size=hidden_size, dropout_prob=class_dropout_prob)
         num_patches = self.x_embedder.num_patches
         # Will use fixed sin-cos embedding:
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, hidden_size), requires_grad=False)
@@ -263,13 +309,24 @@ class DiT(nn.Module):
         # Initialize label embedding table:
         # nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
 
-        # [修改] Initialize continuous label embedder (MLP):
-        # 遍历 ContinuousEmbedder 中的所有线性层进行初始化
-        for module in self.y_embedder.mlp:
-            if isinstance(module, nn.Linear):
-                nn.init.normal_(module.weight, std=0.02)
-                if module.bias is not None:
-                    nn.init.constant_(module.bias, 0)
+        # [修改] 针对不同 Embedder 的初始化逻辑
+        if isinstance(self.y_embedder, LearnableContinuousEmbedder):
+            # 初始化 MLP
+            for module in self.y_embedder.mlp:
+                if isinstance(module, nn.Linear):
+                    nn.init.normal_(module.weight, std=0.02)
+                    if module.bias is not None:
+                        nn.init.constant_(module.bias, 0)
+            # [核心] 初始化可学习的 Null Embedding
+            nn.init.normal_(self.y_embedder.null_embedding, std=0.02)
+            
+        else:
+            # 旧逻辑 (ContinuousEmbedder)
+            for module in self.y_embedder.mlp:
+                if isinstance(module, nn.Linear):
+                    nn.init.normal_(module.weight, std=0.02)
+                    if module.bias is not None:
+                        nn.init.constant_(module.bias, 0)
 
         # Initialize timestep embedding MLP:
         nn.init.normal_(self.t_embedder.mlp[0].weight, std=0.02)

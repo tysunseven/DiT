@@ -201,9 +201,10 @@ def main(args):
     # 紧跟在字典取值后的括号 (...) 代表调用刚才取出的那个函数
     model = DiT_models[args.model](
         input_size=latent_size,
-        num_classes=args.num_classes
+        num_classes=args.num_classes,
+        learnable_null=args.learnable_null  # <--- 传入参数
         # class_dropout_prob=0.0 # 关闭无条件训练
-    )
+    ).to(device)
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
     requires_grad(ema, False)
@@ -361,6 +362,9 @@ if __name__ == "__main__":
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument("--ckpt-every", type=int, default=50_000)
+    # [新增] 开关参数
+    parser.add_argument("--learnable-null", action="store_true", 
+                        help="Enable learnable null embedding (new scheme). If not set, use fixed [2,2] (legacy).")
     # 读取在终端输入命令时跟在脚本后面的那些参数，并将它们打包成一个名为 args 的对象
     args = parser.parse_args()
     main(args)

@@ -48,7 +48,8 @@ def main(args):
 
     model = DiT_models[args.model](
         input_size=latent_size,
-        num_classes=args.num_classes
+        num_classes=args.num_classes,
+        learnable_null=args.learnable_null # <--- 传入
     ).to(device)
     # Auto-download a pre-trained model or load a custom DiT checkpoint from train.py:
     # ckpt_path = args.ckpt or f"DiT-XL-2-{args.image_size}x{args.image_size}.pt"
@@ -217,6 +218,6 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt", type=str, default=MY_CKPT_PATH)
     parser.add_argument("--target-real", type=float, default=MY_TARGET_REAL)
     parser.add_argument("--target-imag", type=float, default=MY_TARGET_IMAG)
-    
+    parser.add_argument("--learnable-null", action="store_true", help="Must set this if the checkpoint was trained with learnable null.")
     args = parser.parse_args()
     main(args)

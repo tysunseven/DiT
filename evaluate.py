@@ -30,7 +30,7 @@ from download import find_model
 # [配置区]
 # ==========================================
 MATLAB_SCRIPT_PATH = r"C:\Users\Administrator\Documents\Acoustic-Metamaterial" 
-NUM_REPEATS = 5       # 每个点重复生成几次
+NUM_REPEATS = 1       # 每个点重复生成几次
 SUCCESS_THRESHOLD = 0.10  # 成功率阈值
 DEFAULT_CFG_SCALE = 4.0
 DEFAULT_CKPT_DIRS = [
@@ -240,7 +240,8 @@ def main(args):
 
         model = DiT_models[args.model](
             input_size=image_size,
-            num_classes=args.num_classes
+            num_classes=args.num_classes,
+            learnable_null=args.learnable_null # <--- 传入
         ).to(device)
         model.load_state_dict(state_dict)
         model.eval()
@@ -258,8 +259,8 @@ def main(args):
             
             # [修正] 必须使用 [2.0, 2.0] 作为 Null Token，与 training/sample 保持一致
             # 创建一个 [1, 2] 的向量然后复制 n_samples 份
-            y_null = torch.tensor([[2.0, 2.0]], device=device).repeat(n_samples, 1)
-            # y_null = torch.zeros_like(y) # 使用全零作为 Null Token
+            # y_null = torch.tensor([[2.0, 2.0]], device=device).repeat(n_samples, 1)
+            y_null = torch.zeros_like(y) # 使用全零作为 Null Token
             
             y_combined = torch.cat([y, y_null], 0)
             model_kwargs = dict(y=y_combined, cfg_scale=DEFAULT_CFG_SCALE)
@@ -412,6 +413,6 @@ if __name__ == "__main__":
     parser.add_argument("--num-sampling-steps", type=int, default=250)
     parser.add_argument("--ckpt-dirs", nargs="*", default=DEFAULT_CKPT_DIRS, help="Checkpoint files or directories")
     parser.add_argument("--out-dir", type=str, default="eval_results", help="Output directory")
-    
+    parser.add_argument("--learnable-null", action="store_true", help="Must set this if the checkpoint was trained with learnable null.")
     args = parser.parse_args()
     main(args)
