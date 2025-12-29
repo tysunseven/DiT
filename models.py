@@ -358,19 +358,22 @@ class DiT(nn.Module):
         imgs = x.reshape(shape=(x.shape[0], c, h * p, h * p))
         return imgs
 
-    def forward(self, x, t, y):
+    # [修改] 增加 force_drop_ids 参数，用于接收强制丢弃信号
+    def forward(self, x, t, y, force_drop_ids=None):
         """
         Forward pass of DiT.
         x: (N, C, H, W) tensor of spatial inputs (images or latent representations of images)
-        N: batch size C: number of channels H: height W: width
-        C 是数据的特征维度（深度），普通彩色图片是3，而声学超材料情形应该是1
-        所以我应该去上面将 in_channels 设为1
         t: (N,) tensor of diffusion timesteps
         y: (N,) tensor of class labels
+        force_drop_ids: (N,) tensor of booleans, True indicates this sample should use null embedding
         """
         x = self.x_embedder(x) + self.pos_embed  # (N, T, D), where T = H * W / patch_size ** 2
         t = self.t_embedder(t)                   # (N, D)
-        y = self.y_embedder(y, self.training)    # (N, D)
+        
+        # [核心修改] 将 force_drop_ids 传递给 y_embedder
+        # 这样 LearnableContinuousEmbedder 才能知道何时使用 null_embedding
+        y = self.y_embedder(y, self.training, force_drop_ids)    # (N, D)
+        
         c = t + y                                # (N, D)
         for block in self.blocks:
             x = block(x, c)                      # (N, T, D)
@@ -378,6 +381,7 @@ class DiT(nn.Module):
         x = self.unpatchify(x)                   # (N, out_channels, H, W)
         return x
 
+    # [修改] 在这里自动构造 force_drop_ids
     def forward_with_cfg(self, x, t, y, cfg_scale):
         """
         Forward pass of DiT, but also batches the unconditional forward pass for classifier-free guidance.
@@ -385,14 +389,21 @@ class DiT(nn.Module):
         # https://github.com/openai/glide-text2im/blob/main/notebooks/text2im.ipynb
         half = x[: len(x) // 2]
         combined = torch.cat([half, half], dim=0)
-        model_out = self.forward(combined, t, y)
+        
+        # [核心修改] 构造 force_drop_ids
+        # combined 的前半部分是条件生成 (False)，后半部分是无条件生成 (True)
+        force_drop_ids = torch.cat([
+            torch.zeros(len(half), dtype=torch.bool, device=x.device),
+            torch.ones(len(half), dtype=torch.bool, device=x.device)
+        ], dim=0)
+
+        # 将 force_drop_ids 传给 forward
+        model_out = self.forward(combined, t, y, force_drop_ids=force_drop_ids)
+        
         # For exact reproducibility reasons, we apply classifier-free guidance on only
         # three channels by default. The standard approach to cfg applies it to all channels.
         # This can be done by uncommenting the following line and commenting-out the line following that.
         # eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
-        # eps, rest = model_out[:, :3], model_out[:, 3:]
-        # [修改] 使用 self.in_channels (通常是1) 而不是硬编码的 3
-        # model_out 的前半部分是预测的噪声 (eps)，后半部分是方差 (rest, 如果 learn_sigma=True)
         eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
