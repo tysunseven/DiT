@@ -32,7 +32,7 @@ from download import find_model
 MATLAB_SCRIPT_PATH = r"C:\Users\Administrator\Documents\Acoustic-Metamaterial" 
 NUM_REPEATS = 5       # 每个点重复生成几次
 SUCCESS_THRESHOLD = 0.10  # 成功率阈值
-DEFAULT_CFG_SCALE = 1.0
+DEFAULT_CFG_SCALE = 4.0
 DEFAULT_CKPT_DIRS = [
     # "results/16-data-01_DiT-Tiny1_20251224-155744/checkpoints/",
     # "results/16-data-01_DiT-Tiny1_20251223-221753/checkpoints/",
@@ -264,34 +264,34 @@ def main(args):
             model_kwargs = dict(y=y_combined, cfg_scale=DEFAULT_CFG_SCALE)
             sample_fn = model.forward_with_cfg
         else:
-            # model_kwargs = dict(y=y) # 原始版本
-            # sample_fn = model.forward # 原始版本
-            # ================= [实验修改] =================
-            # 进入这个分支意味着 args.cfg_scale <= 1.0 (通常是 1.0)
-            # 我们在这里强行执行 "噪声放大实验"
+            model_kwargs = dict(y=y) # 原始版本
+            sample_fn = model.forward # 原始版本
+            # # ================= [实验修改] =================
+            # # 进入这个分支意味着 args.cfg_scale <= 1.0 (通常是 1.0)
+            # # 我们在这里强行执行 "噪声放大实验"
             
-            # 定义放大的倍数 (因为此时 args.cfg_scale 是 1.0，不能用它做倍数，必须手写 4.0)
-            FORCED_SCALE = 4.0 
+            # # 定义放大的倍数 (因为此时 args.cfg_scale 是 1.0，不能用它做倍数，必须手写 4.0)
+            # FORCED_SCALE = 4.0 
             
-            print(f" [实验模式] 进入标准分支 (Scale=1.0)，但强制放大噪声 {FORCED_SCALE} 倍")
+            # print(f" [实验模式] 进入标准分支 (Scale=1.0)，但强制放大噪声 {FORCED_SCALE} 倍")
 
-            def forward_with_forced_scaling(x, t, y, **kwargs):
-                # 1. 正常的单次前向传播
-                model_out = model(x, t, y)
+            # def forward_with_forced_scaling(x, t, y, **kwargs):
+            #     # 1. 正常的单次前向传播
+            #     model_out = model(x, t, y)
                 
-                # 2. 拆分噪声(eps)和方差(rest)
-                C = model.in_channels
-                eps, rest = model_out[:, :C], model_out[:, C:]
+            #     # 2. 拆分噪声(eps)和方差(rest)
+            #     C = model.in_channels
+            #     eps, rest = model_out[:, :C], model_out[:, C:]
                 
-                # 3. [核心] 强制放大
-                eps = eps * FORCED_SCALE
+            #     # 3. [核心] 强制放大
+            #     eps = eps * FORCED_SCALE
                 
-                # 4. 拼回去
-                return torch.cat([eps, rest], dim=1)
+            #     # 4. 拼回去
+            #     return torch.cat([eps, rest], dim=1)
 
-            sample_fn = forward_with_forced_scaling
-            model_kwargs = dict(y=y)
-            # ================= [修改结束] =================
+            # sample_fn = forward_with_forced_scaling
+            # model_kwargs = dict(y=y)
+            # # ================= [修改结束] =================
 
         start_time = time.time()
         samples = diffusion.p_sample_loop(

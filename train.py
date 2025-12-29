@@ -201,8 +201,8 @@ def main(args):
     # 紧跟在字典取值后的括号 (...) 代表调用刚才取出的那个函数
     model = DiT_models[args.model](
         input_size=latent_size,
-        num_classes=args.num_classes,
-        class_dropout_prob=0.0 # 关闭无条件训练
+        num_classes=args.num_classes
+        # class_dropout_prob=0.0 # 关闭无条件训练
     )
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
