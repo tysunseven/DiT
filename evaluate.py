@@ -32,10 +32,11 @@ from download import find_model
 MATLAB_SCRIPT_PATH = r"C:\Users\Administrator\Documents\Acoustic-Metamaterial" 
 NUM_REPEATS = 20       # 每个点重复生成几次
 SUCCESS_THRESHOLD = 0.10  # 成功率阈值
-DEFAULT_CFG_SCALE = 4.0
+DEFAULT_CFG_SCALE = 1.0
 DEFAULT_CKPT_DIRS = [
-    "results/16-data-01_DiT-Tiny1_20251224-155744/checkpoints/",
-    "results/16-data-01_DiT-Tiny1_20251223-221753/checkpoints/",
+    # "results/16-data-01_DiT-Tiny1_20251224-155744/checkpoints/",
+    # "results/16-data-01_DiT-Tiny1_20251223-221753/checkpoints/",
+    "results/16-data-01_DiT-Tiny1_20251228-214600/checkpoints/", # 这个是没有学过无条件生成的
 ]
 
 

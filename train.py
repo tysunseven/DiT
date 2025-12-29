@@ -201,7 +201,8 @@ def main(args):
     # 紧跟在字典取值后的括号 (...) 代表调用刚才取出的那个函数
     model = DiT_models[args.model](
         input_size=latent_size,
-        num_classes=args.num_classes
+        num_classes=args.num_classes,
+        class_dropout_prob=0.0 # 关闭无条件训练
     )
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
@@ -347,7 +348,7 @@ if __name__ == "__main__":
     # parser.add_argument("--data-path", type=str, required=True)
     # parser.add_argument("--structure-path", type=str, default="data/surrogate_structures.npy", help="Path to structures.npy")
     # parser.add_argument("--target-path", type=str, default="data/surrogate_properties.npy", help="Path to targets.npy")
-    parser.add_argument("--dataset", type=str, default="08-data-01", 
+    parser.add_argument("--dataset", type=str, default="16-data-01", 
                         help="Name of the dataset folder in ./data/ (e.g., 08-data-01)")
     parser.add_argument("--results-dir", type=str, default="results")
     parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-Tiny1")
