@@ -30,7 +30,7 @@ from download import find_model
 # [配置区]
 # ==========================================
 MATLAB_SCRIPT_PATH = r"C:\Users\Administrator\Documents\Acoustic-Metamaterial" 
-NUM_REPEATS = 20       # 每个点重复生成几次
+NUM_REPEATS = 5       # 每个点重复生成几次
 SUCCESS_THRESHOLD = 0.10  # 成功率阈值
 DEFAULT_CFG_SCALE = 1.0
 DEFAULT_CKPT_DIRS = [
@@ -258,13 +258,40 @@ def main(args):
             # [修正] 必须使用 [2.0, 2.0] 作为 Null Token，与 training/sample 保持一致
             # 创建一个 [1, 2] 的向量然后复制 n_samples 份
             y_null = torch.tensor([[2.0, 2.0]], device=device).repeat(n_samples, 1)
+            # y_null = torch.zeros_like(y) # 使用全零作为 Null Token
             
             y_combined = torch.cat([y, y_null], 0)
             model_kwargs = dict(y=y_combined, cfg_scale=DEFAULT_CFG_SCALE)
             sample_fn = model.forward_with_cfg
         else:
+            # model_kwargs = dict(y=y) # 原始版本
+            # sample_fn = model.forward # 原始版本
+            # ================= [实验修改] =================
+            # 进入这个分支意味着 args.cfg_scale <= 1.0 (通常是 1.0)
+            # 我们在这里强行执行 "噪声放大实验"
+            
+            # 定义放大的倍数 (因为此时 args.cfg_scale 是 1.0，不能用它做倍数，必须手写 4.0)
+            FORCED_SCALE = 4.0 
+            
+            print(f" [实验模式] 进入标准分支 (Scale=1.0)，但强制放大噪声 {FORCED_SCALE} 倍")
+
+            def forward_with_forced_scaling(x, t, y, **kwargs):
+                # 1. 正常的单次前向传播
+                model_out = model(x, t, y)
+                
+                # 2. 拆分噪声(eps)和方差(rest)
+                C = model.in_channels
+                eps, rest = model_out[:, :C], model_out[:, C:]
+                
+                # 3. [核心] 强制放大
+                eps = eps * FORCED_SCALE
+                
+                # 4. 拼回去
+                return torch.cat([eps, rest], dim=1)
+
+            sample_fn = forward_with_forced_scaling
             model_kwargs = dict(y=y)
-            sample_fn = model.forward
+            # ================= [修改结束] =================
 
         start_time = time.time()
         samples = diffusion.p_sample_loop(
