@@ -37,7 +37,8 @@ DEFAULT_CKPT_DIRS = [
     # "results/16-data-01_DiT-Tiny1_20251224-155744/checkpoints/",
     # "results/16-data-01_DiT-Tiny1_20251223-221753/checkpoints/",
     # "results/16-data-01_DiT-Tiny1_20251228-214600/checkpoints/", # 这个是没有学过无条件生成的
-    "results/16-data-01_DiT-Tiny1_20251229-150508/checkpoints/", # 这个是有学过无条件生成的，且无条件向量为2，2
+    # "results/16-data-01_DiT-Tiny1_20251229-150508/checkpoints/", # 这个是有学过无条件生成的，且无条件向量为2，2
+    "results/16-data-01_DiT-Tiny1_20251230-080222/checkpoints/", # 这个是使用learnable-null的
 ]
 
 
