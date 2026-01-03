@@ -285,7 +285,8 @@ class FinalLayer(nn.Module):
         self.linear = nn.Linear(hidden_size, patch_size * patch_size * out_channels, bias=True)
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(hidden_size, 2 * hidden_size, bias=True)
+            nn.Linear(2 * hidden_size, 2 * hidden_size, bias=True)
+            # nn.Linear(hidden_size, 2 * hidden_size, bias=True)
         )
 
     def forward(self, x, c):
@@ -323,10 +324,18 @@ class DiT(nn.Module):
         self.x_embedder = PatchEmbed(input_size, patch_size, in_channels, hidden_size, bias=True)
         self.t_embedder = TimestepEmbedder(hidden_size)
         # self.y_embedder = LabelEmbedder(num_classes, hidden_size, class_dropout_prob)
-        # [修改] 根据参数选择使用哪个 Embedder
+        # # [修改] 根据参数选择使用哪个 Embedder
+        # if learnable_null:
+        #     print(" [Model] Using Learnable Null Embedding (New Scheme)")
+        #     self.y_embedder = LearnableContinuousEmbedder(input_dim=2, hidden_size=hidden_size, dropout_prob=class_dropout_prob)
+        # else:
+        #     print(" [Model] Using Fixed Null Input [2, 2] (Legacy Scheme)")
+        #     self.y_embedder = ContinuousEmbedder(input_dim=2, hidden_size=hidden_size, dropout_prob=class_dropout_prob)
+        # [修正] 使用 FourierContinuousEmbedder
         if learnable_null:
-            print(" [Model] Using Learnable Null Embedding (New Scheme)")
-            self.y_embedder = LearnableContinuousEmbedder(input_dim=2, hidden_size=hidden_size, dropout_prob=class_dropout_prob)
+            print(" [Model] Using Fourier Features + Learnable Null Embedding")
+            # 注意：FourierContinuousEmbedder 内部已经包含了 learnable null 逻辑
+            self.y_embedder = FourierContinuousEmbedder(input_dim=2, hidden_size=hidden_size, dropout_prob=class_dropout_prob)
         else:
             print(" [Model] Using Fixed Null Input [2, 2] (Legacy Scheme)")
             self.y_embedder = ContinuousEmbedder(input_dim=2, hidden_size=hidden_size, dropout_prob=class_dropout_prob)
@@ -365,7 +374,7 @@ class DiT(nn.Module):
         # nn.init.normal_(self.y_embedder.embedding_table.weight, std=0.02)
 
         # [修改] 针对不同 Embedder 的初始化逻辑
-        if isinstance(self.y_embedder, LearnableContinuousEmbedder):
+        if isinstance(self.y_embedder, LearnableContinuousEmbedder) or isinstance(self.y_embedder, FourierContinuousEmbedder):
             # 初始化 MLP
             for module in self.y_embedder.mlp:
                 if isinstance(module, nn.Linear):
