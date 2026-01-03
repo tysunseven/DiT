@@ -189,6 +189,60 @@ class LearnableContinuousEmbedder(nn.Module):
                 )
         return embeddings
 
+class FourierContinuousEmbedder(nn.Module):
+    def __init__(self, input_dim, hidden_size, dropout_prob, freq_embedding_size=256):
+        super().__init__()
+        # input_dim=2 (实部, 虚部)
+        # 我们为每个维度单独生成 freq_embedding_size 的正弦特征
+        # 所以 MLP 的输入维度是 input_dim * freq_embedding_size
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim * freq_embedding_size, hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+        self.dropout_prob = dropout_prob
+        self.freq_embedding_size = freq_embedding_size
+        
+        # 定义一个可学习的 Null Embedding (保留你之前的 Learnable 方案)
+        self.null_embedding = nn.Parameter(torch.randn(1, hidden_size))
+
+    def sinusoidal_embedding(self, x):
+        # x: [N, 2]
+        # 我们可以复用 TimestepEmbedder.timestep_embedding 的逻辑，但需要适配多维输入
+        # 这里用一种简单的高频映射策略: [sin(2^k * PI * x), cos(2^k * PI * x), ...]
+        
+        # 简单起见，我们对每一列分别做 timestep_embedding 然后拼接
+        # 假设 x[:, 0] 是实部， x[:, 1] 是虚部
+        freqs = []
+        for i in range(x.shape[1]):
+            # 使用 TimestepEmbedder 的静态方法 (需要确保 import 了)
+            emb = TimestepEmbedder.timestep_embedding(x[:, i], self.freq_embedding_size)
+            freqs.append(emb)
+        return torch.cat(freqs, dim=-1) # [N, 2 * freq_size]
+
+    def forward(self, labels, train, force_drop_ids=None):
+        # 1. 先进行高维映射 (Fourier Features)
+        # labels: [N, 2] -> [N, 512]
+        labels_freq = self.sinusoidal_embedding(labels)
+        
+        # 2. 再过 MLP
+        embeddings = self.mlp(labels_freq)
+
+        # 3. 处理 Dropout (和之前一样，替换输出)
+        use_dropout = self.dropout_prob > 0
+        if (train and use_dropout) or (force_drop_ids is not None):
+            if force_drop_ids is None:
+                drop_ids = torch.rand(embeddings.shape[0], device=embeddings.device) < self.dropout_prob
+            else:
+                drop_ids = force_drop_ids == 1
+            
+            if drop_ids.any():
+                embeddings = torch.where(
+                    drop_ids.unsqueeze(1), 
+                    self.null_embedding.to(embeddings.dtype), 
+                    embeddings
+                )
+        return embeddings
 
 #################################################################################
 #                                 Core DiT Model                                #
@@ -208,7 +262,8 @@ class DiTBlock(nn.Module):
         self.mlp = Mlp(in_features=hidden_size, hidden_features=mlp_hidden_dim, act_layer=approx_gelu, drop=0)
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(hidden_size, 6 * hidden_size, bias=True)
+            nn.Linear(2 * hidden_size, 6 * hidden_size, bias=True)
+            # nn.Linear(hidden_size, 6 * hidden_size, bias=True)
         )
 
     def forward(self, x, c):
@@ -374,7 +429,11 @@ class DiT(nn.Module):
         # 这样 LearnableContinuousEmbedder 才能知道何时使用 null_embedding
         y = self.y_embedder(y, self.training, force_drop_ids)    # (N, D)
         
-        c = t + y                                # (N, D)
+        # c = t + y                                # (N, D)
+        # [修改] 改为拼接
+        # c 的形状变为 [N, 2 * hidden_size]
+        c = torch.cat([t, y], dim=-1)
+
         for block in self.blocks:
             x = block(x, c)                      # (N, T, D)
         x = self.final_layer(x, c)                # (N, T, patch_size ** 2 * out_channels)
