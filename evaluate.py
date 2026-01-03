@@ -30,7 +30,7 @@ from download import find_model
 # [配置区]
 # ==========================================
 MATLAB_SCRIPT_PATH = r"C:\Users\Administrator\Documents\Acoustic-Metamaterial" 
-NUM_REPEATS = 1       # 每个点重复生成几次
+NUM_REPEATS = 5       # 每个点重复生成几次
 SUCCESS_THRESHOLD = 0.10  # 成功率阈值
 DEFAULT_CFG_SCALE = 4.0
 DEFAULT_CKPT_DIRS = [
