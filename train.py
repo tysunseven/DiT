@@ -31,6 +31,7 @@ from datetime import datetime
 from models import DiT_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
+from torch.optim.lr_scheduler import CosineAnnealingLR
 
 
 #################################################################################
@@ -220,6 +221,10 @@ def main(args):
     # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
     opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
 
+    # [新增] 定义余弦退火调度器
+    # 假设 epochs=1400，它会让学习率从 1e-4 平滑下降到 1e-6
+    scheduler = CosineAnnealingLR(opt, T_max=args.epochs, eta_min=1e-6)
+
     # Setup data:
     transform = transforms.Compose([
         transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
@@ -334,6 +339,9 @@ def main(args):
                     torch.save(checkpoint, checkpoint_path)
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
                 dist.barrier()
+
+        # [新增] 每个 Epoch 结束时更新学习率
+        scheduler.step()
 
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
