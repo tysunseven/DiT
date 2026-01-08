@@ -28,6 +28,8 @@ import logging
 import os
 from datetime import datetime
 
+# 从 models.py 文件中，把名为 DiT_models 的这个对象（变量、函数或类）引入到当前 train.py 的命名空间中
+# DiT_models 是一个字典，把字符串名字（我们在命令行输入的）映射到对应的模型构造函数（代码里定义的函数）
 from models import DiT_models
 from diffusion import create_diffusion
 from diffusers.models import AutoencoderKL
@@ -202,7 +204,7 @@ def main(args):
     # 紧跟在字典取值后的括号 (...) 代表调用刚才取出的那个函数
     model = DiT_models[args.model](
         input_size=latent_size,
-        num_classes=args.num_classes,
+        # num_classes=args.num_classes,
         learnable_null=args.learnable_null  # <--- 传入参数
         # class_dropout_prob=0.0 # 关闭无条件训练
     ).to(device)
@@ -357,19 +359,42 @@ if __name__ == "__main__":
     # parser.add_argument("--data-path", type=str, required=True)
     # parser.add_argument("--structure-path", type=str, default="data/surrogate_structures.npy", help="Path to structures.npy")
     # parser.add_argument("--target-path", type=str, default="data/surrogate_properties.npy", help="Path to targets.npy")
-    parser.add_argument("--dataset", type=str, default="16-data-01", 
-                        help="Name of the dataset folder in ./data/ (e.g., 08-data-01)")
+    
+    # 决定使用哪个数据集，现有的5次实验用的都是 16-data-01
+    parser.add_argument("--dataset", type=str, default="16-data-01")
+    # image-size 是多少，这个参数我挺想删掉的，感觉读数据集的大小就可以了
+    parser.add_argument("--image-size", type=int, default=16)
+
+    # 指定实验结果（日志、Checkpoints）的根目录，感觉可以不要这个参数，直接写死为 "results" 
     parser.add_argument("--results-dir", type=str, default="results")
+
+    # 决定使用哪个 DiT 模型，现有的5次实验用的都是 DiT-Tiny1
     parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-Tiny1")
-    parser.add_argument("--image-size", type=int, default=8)
-    parser.add_argument("--num-classes", type=int, default=1000)
+
+    # 僵尸参数，可不可以直接删掉？
+    # parser.add_argument("--num-classes", type=int, default=1000)
+
+    # 可不可以拓展一下在现有模型基础上继续训练的功能？
     parser.add_argument("--epochs", type=int, default=1400)
+
+    # batch-size 就这样吧，感觉没什么大的影响
     parser.add_argument("--global-batch-size", type=int, default=256)
+
+    # 随机种子，用于复现结果
     parser.add_argument("--global-seed", type=int, default=0)
-    parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
+
+    # 僵尸参数，可不可以直接删掉？
+    # parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
+
+    # 这个应该也不用改
     parser.add_argument("--num-workers", type=int, default=4)
+
+    # 每隔多少step打印一次日志
     parser.add_argument("--log-every", type=int, default=100)
+
+    # 每隔多少step保存一次模型权重
     parser.add_argument("--ckpt-every", type=int, default=50_000)
+
     # [新增] 开关参数
     parser.add_argument("--learnable-null", action="store_true", 
                         help="Enable learnable null embedding (new scheme). If not set, use fixed [2,2] (legacy).")
