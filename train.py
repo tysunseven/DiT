@@ -259,17 +259,17 @@ def main(args):
 
     # 检查一下文件是否存在，防止拼写错误
     if not os.path.exists(structure_path) or not os.path.exists(target_path):
-        raise FileNotFoundError(f"Data files not found in data/{args.dataset}/. Please check the folder name.")
+        raise FileNotFoundError(f"Data files not found in data/{args.data.dataset}/. Please check the folder name.")
 
     dataset = AcousticDataset(structure_path, target_path)
-    logger.info(f"Dataset loaded from: data/{args.dataset}")
+    logger.info(f"Dataset loaded from: data/{args.data.dataset}")
     # ------------------- 修改结束 -------------------
     sampler = DistributedSampler(
         dataset,
         num_replicas=dist.get_world_size(),
         rank=rank,
         shuffle=True,
-        seed=args.global_seed
+        seed=args.training.global_seed
     )
     loader = DataLoader(
         dataset,
@@ -284,7 +284,7 @@ def main(args):
     )
     # logger.info(f"Dataset contains {len(dataset):,} images ({args.data_path})")
     # logger.info(f"Dataset contains {len(dataset):,} samples ({args.structure_path})")
-    logger.info(f"Dataset contains {len(dataset):,} samples (from {args.dataset})")
+    logger.info(f"Dataset contains {len(dataset):,} samples (from {args.data.dataset})")
 
     # Prepare models for training:
     update_ema(ema, model.module, decay=0)  # Ensure EMA is initialized with synced weights
@@ -299,7 +299,7 @@ def main(args):
 
     # [修改] args.training.epochs
     logger.info(f"Training for {args.training.epochs} epochs...")
-    for epoch in range(args.epochs):
+    for epoch in range(args.training.epochs):
         sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
         for x, y in loader:
