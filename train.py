@@ -27,6 +27,8 @@ import argparse
 import logging
 import os
 from datetime import datetime
+# [新增] 引入 OmegaConf
+from omegaconf import OmegaConf
 
 # 从 models.py 文件中，把名为 DiT_models 的这个对象（变量、函数或类）引入到当前 train.py 的命名空间中
 # DiT_models 是一个字典，把字符串名字（我们在命令行输入的）映射到对应的模型构造函数（代码里定义的函数）
@@ -153,10 +155,12 @@ def main(args):
         world_size=1
     )
     # ------------------- 修改结束 -------------------
-    assert args.global_batch_size % dist.get_world_size() == 0, f"Batch size must be divisible by world size."
+    # [修改] args.global_batch_size -> args.training.global_batch_size
+    assert args.training.global_batch_size % dist.get_world_size() == 0, f"Batch size must be divisible by world size."
     rank = dist.get_rank()
     device = rank % torch.cuda.device_count()
-    seed = args.global_seed * dist.get_world_size() + rank
+    # [修改] args.training.global_seed
+    seed = args.training.global_seed * dist.get_world_size() + rank
     torch.manual_seed(seed)
     torch.cuda.set_device(device)
     print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
@@ -164,7 +168,8 @@ def main(args):
     # Setup an experiment folder:
     if rank == 0: # 如果是主进程
         # 检查文件夹 args.results_dir 是否存在，不存在则创建
-        os.makedirs(args.results_dir, exist_ok=True)  # Make results folder (holds all experiment subfolders)
+        # [修改] args.experiment.results_dir
+        os.makedirs(args.experiment.results_dir, exist_ok=True)
         # 计算当前 results 目录下已经有了多少个文件夹
         # experiment_index = len(glob(f"{args.results_dir}/*"))
         # # 字符串处理，文件系统路径里不能包含 / 字符，所以把它们替换为 -
@@ -176,13 +181,14 @@ def main(args):
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         
         # 2. 处理模型名称 (把 / 换成 -)
-        model_string_name = args.model.replace("/", "-")
+        # [修改] args.model.name
+        model_string_name = args.model.name.replace("/", "-")
         
         # 3. 构造文件夹名: 数据集-模型-时间戳 (按照你指定的顺序)
         # 例如: results/08-data-01_DiT-Tiny_20251223-143005
-        experiment_name = f"{args.dataset}_{model_string_name}_{timestamp}"
-
-        experiment_dir = f"{args.results_dir}/{experiment_name}"
+        # [修改] args.data.dataset
+        experiment_name = f"{args.data.dataset}_{model_string_name}_{timestamp}"
+        experiment_dir = f"{args.experiment.results_dir}/{experiment_name}"
         # ------------------- 修改结束 -------------------
         # 在实验文件夹内部再定义一个 checkpoints 子目录，专门用来放后面训练产生的 .pt 权重文件
         checkpoint_dir = f"{experiment_dir}/checkpoints"  # Stores saved model checkpoints
@@ -191,22 +197,28 @@ def main(args):
         # create_logger 函数定义在本文件的上方，是自定义的一个函数
         logger = create_logger(experiment_dir)
         logger.info(f"Experiment directory created at {experiment_dir}")
+
+        # [新增] 极其重要：备份本次实验的配置文件！
+        # 这样你永远知道这个文件夹是用什么参数跑出来的
+        yaml_path = os.path.join(experiment_dir, "config.yaml")
+        OmegaConf.save(config=args, f=yaml_path)
+        logger.info(f"Configuration saved to {yaml_path}")
+
     else:
         logger = create_logger(None)
 
     # Create model:
-    assert args.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
+    assert args.data.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     # latent_size = args.image_size // 8
     latent_size = args.image_size # (直接是8)
     # DiT_models 是在 models.py 文件末尾定义的一个 Python 字典 (dict)
     # 它的键 (Key) 是字符串，比如 "DiT-XL/2" 或 "DiT-B/4"
     # 它的值 (Value) 并不是字符串，而是 函数对象（构造函数）
     # 紧跟在字典取值后的括号 (...) 代表调用刚才取出的那个函数
-    model = DiT_models[args.model](
+    # [修改] args.model.name, args.model.learnable_null
+    model = DiT_models[args.model.name](
         input_size=latent_size,
-        # num_classes=args.num_classes,
-        learnable_null=args.learnable_null  # <--- 传入参数
-        # class_dropout_prob=0.0 # 关闭无条件训练
+        learnable_null=args.model.learnable_null
     ).to(device)
     # Note that parameter initialization is done within the DiT constructor
     ema = deepcopy(model).to(device)  # Create an EMA of the model for use after training
@@ -220,16 +232,18 @@ def main(args):
     # vae = AutoencoderKL.from_pretrained(f"stabilityai/sd-vae-ft-{args.vae}").to(device)
     logger.info(f"DiT Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Setup optimizer (we used default Adam betas=(0.9, 0.999) and a constant learning rate of 1e-4 in our paper):
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0)
+    # [修改] args.training.lr
+    opt = torch.optim.AdamW(model.parameters(), lr=args.training.lr, weight_decay=0)
 
     # [新增] 定义余弦退火调度器
     # 假设 epochs=1400，它会让学习率从 1e-4 平滑下降到 1e-6
-    scheduler = CosineAnnealingLR(opt, T_max=args.epochs, eta_min=1e-6)
+    # [修改] args.training.epochs
+    scheduler = CosineAnnealingLR(opt, T_max=args.training.epochs, eta_min=1e-6)
 
     # Setup data:
     transform = transforms.Compose([
-        transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
+        # [修改] args.data.image_size
+        transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.data.image_size)),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
@@ -239,8 +253,9 @@ def main(args):
     # ------------------- 修改开始 -------------------
     # 根据传入的 dataset 参数自动拼接路径
     # 例如：data/08-data-01/surrogate_structures.npy
-    structure_path = os.path.join("data", args.dataset, "structures.npy")
-    target_path = os.path.join("data", args.dataset, "properties.npy")
+    # [修改] args.data.dataset
+    structure_path = os.path.join("data", args.data.dataset, "structures.npy")
+    target_path = os.path.join("data", args.data.dataset, "properties.npy")
 
     # 检查一下文件是否存在，防止拼写错误
     if not os.path.exists(structure_path) or not os.path.exists(target_path):
@@ -258,10 +273,12 @@ def main(args):
     )
     loader = DataLoader(
         dataset,
-        batch_size=int(args.global_batch_size // dist.get_world_size()),
+        # [修改] args.training.global_batch_size
+        batch_size=int(args.training.global_batch_size // dist.get_world_size()),
         shuffle=False,
         sampler=sampler,
-        num_workers=args.num_workers,
+        # [修改] args.data.num_workers
+        num_workers=args.data.num_workers,
         pin_memory=True,
         drop_last=True
     )
@@ -280,7 +297,8 @@ def main(args):
     running_loss = 0
     start_time = time()
 
-    logger.info(f"Training for {args.epochs} epochs...")
+    # [修改] args.training.epochs
+    logger.info(f"Training for {args.training.epochs} epochs...")
     for epoch in range(args.epochs):
         sampler.set_epoch(epoch)
         logger.info(f"Beginning epoch {epoch}...")
@@ -313,7 +331,8 @@ def main(args):
             running_loss += loss.item()
             log_steps += 1
             train_steps += 1
-            if train_steps % args.log_every == 0:
+            # [修改] args.training.log_every
+            if train_steps % args.training.log_every == 0:
                 # Measure training speed:
                 torch.cuda.synchronize()
                 end_time = time()
@@ -328,8 +347,8 @@ def main(args):
                 log_steps = 0
                 start_time = time()
 
-            # Save DiT checkpoint:
-            if train_steps % args.ckpt_every == 0 and train_steps > 0:
+            # [修改] args.training.ckpt_every
+            if train_steps % args.training.ckpt_every == 0 and train_steps > 0:
                 if rank == 0:
                     checkpoint = {
                         "model": model.module.state_dict(),
@@ -353,51 +372,23 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # Default args here will train DiT-XL/2 with the hyperparameters we used in our paper (except training iters).
-    # 使用 argparse.ArgumentParser() 创建了一个参数解析器
+    # 新的入口逻辑
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--data-path", type=str, required=True)
-    # parser.add_argument("--structure-path", type=str, default="data/surrogate_structures.npy", help="Path to structures.npy")
-    # parser.add_argument("--target-path", type=str, default="data/surrogate_properties.npy", help="Path to targets.npy")
+    # 只需要一个核心参数：配置文件路径
+    parser.add_argument("--config", type=str, default="configs/base_config.yaml", help="Path to config file")
+    # 允许通过命令行临时覆盖参数 (例如: training.global_seed=42)
+    parser.add_argument("overrides", nargs=argparse.REMAINDER, help="Modify config options from command line")
     
-    # 决定使用哪个数据集，现有的5次实验用的都是 16-data-01
-    parser.add_argument("--dataset", type=str, default="16-data-01")
-    # image-size 是多少，这个参数我挺想删掉的，感觉读数据集的大小就可以了
-    parser.add_argument("--image-size", type=int, default=16)
+    cmd_args = parser.parse_args()
 
-    # 指定实验结果（日志、Checkpoints）的根目录，感觉可以不要这个参数，直接写死为 "results" 
-    parser.add_argument("--results-dir", type=str, default="results")
-
-    # 决定使用哪个 DiT 模型，现有的5次实验用的都是 DiT-Tiny1
-    parser.add_argument("--model", type=str, choices=list(DiT_models.keys()), default="DiT-Tiny1")
-
-    # 僵尸参数，可不可以直接删掉？
-    # parser.add_argument("--num-classes", type=int, default=1000)
-
-    # 可不可以拓展一下在现有模型基础上继续训练的功能？
-    parser.add_argument("--epochs", type=int, default=1400)
-
-    # batch-size 就这样吧，感觉没什么大的影响
-    parser.add_argument("--global-batch-size", type=int, default=256)
-
-    # 随机种子，用于复现结果
-    parser.add_argument("--global-seed", type=int, default=0)
-
-    # 僵尸参数，可不可以直接删掉？
-    # parser.add_argument("--vae", type=str, choices=["ema", "mse"], default="ema")  # Choice doesn't affect training
-
-    # 这个应该也不用改
-    parser.add_argument("--num-workers", type=int, default=4)
-
-    # 每隔多少step打印一次日志
-    parser.add_argument("--log-every", type=int, default=100)
-
-    # 每隔多少step保存一次模型权重
-    parser.add_argument("--ckpt-every", type=int, default=50_000)
-
-    # [新增] 开关参数
-    parser.add_argument("--learnable-null", action="store_true", 
-                        help="Enable learnable null embedding (new scheme). If not set, use fixed [2,2] (legacy).")
-    # 读取在终端输入命令时跟在脚本后面的那些参数，并将它们打包成一个名为 args 的对象
-    args = parser.parse_args()
-    main(args)
+    # 1. 读取基础配置文件
+    base_conf = OmegaConf.load(cmd_args.config)
+    
+    # 2. 读取命令行覆盖的参数 (如: python train.py training.epochs=10)
+    cli_conf = OmegaConf.from_cli(cmd_args.overrides)
+    
+    # 3. 合并配置 (命令行 > 配置文件)
+    final_args = OmegaConf.merge(base_conf, cli_conf)
+    
+    # 4. 执行训练
+    main(final_args)

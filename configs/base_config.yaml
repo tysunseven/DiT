@@ -1,0 +1,23 @@
+# 实验元数据
+experiment:
+  results_dir: "results"
+
+# 数据相关
+data:
+  dataset: "16-data-01"
+  image_size: 16
+  num_workers: 4
+
+# 模型相关
+model:
+  name: "DiT-Tiny1"
+  learnable_null: True  # 这里直接控制是否开启 Learnable Null
+
+# 训练超参数
+training:
+  epochs: 1400
+  global_batch_size: 256
+  global_seed: 0
+  lr: 0.0001
+  log_every: 100
+  ckpt_every: 50000
