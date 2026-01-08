@@ -21,3 +21,4 @@ training:
   lr: 0.0001
   log_every: 100
   ckpt_every: 50000
+  lr_scheduler: "constant"

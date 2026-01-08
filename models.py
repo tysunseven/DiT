@@ -578,10 +578,28 @@ def DiT_Tiny1(**kwargs):
     # hidden_size=64, depth=6 左右即可，避免过拟合
     return DiT(depth=6, hidden_size=64, patch_size=1, num_heads=4, **kwargs)
 
+# 2. [新增] Tiny2: 宽度适度增加 (64 -> 96)
+def DiT_Tiny2(**kwargs):
+    # hidden=96, heads=6 (每头16维)
+    return DiT(depth=6, hidden_size=96, patch_size=1, num_heads=6, **kwargs)
+
+# 3. [新增] Tiny3: 宽度翻倍，略微加深 (64 -> 128, 6 -> 8)
+def DiT_Tiny3(**kwargs):
+    # hidden=128, heads=4 (每头32维，更关注全局)
+    return DiT(depth=8, hidden_size=128, patch_size=1, num_heads=4, **kwargs)
+
+# 4. [新增] Tiny4 (原Mini): 接近 ViT-Tiny 标准配置
+def DiT_Tiny4(**kwargs):
+    return DiT(depth=12, hidden_size=192, patch_size=1, num_heads=6, **kwargs)
+
 DiT_models = {
     'DiT-XL/2': DiT_XL_2,  'DiT-XL/4': DiT_XL_4,  'DiT-XL/8': DiT_XL_8,
     'DiT-L/2':  DiT_L_2,   'DiT-L/4':  DiT_L_4,   'DiT-L/8':  DiT_L_8,
     'DiT-B/2':  DiT_B_2,   'DiT-B/4':  DiT_B_4,   'DiT-B/8':  DiT_B_8,
     'DiT-S/2':  DiT_S_2,   'DiT-S/4':  DiT_S_4,   'DiT-S/8':  DiT_S_8,
+    # 你的 Tiny 家族
     'DiT-Tiny1': DiT_Tiny1,
+    'DiT-Tiny2': DiT_Tiny2,
+    'DiT-Tiny3': DiT_Tiny3,
+    'DiT-Tiny4': DiT_Tiny4,
 }

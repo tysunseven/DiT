@@ -210,7 +210,7 @@ def main(args):
     # Create model:
     assert args.data.image_size % 8 == 0, "Image size must be divisible by 8 (for the VAE encoder)."
     # latent_size = args.image_size // 8
-    latent_size = args.image_size # (直接是8)
+    latent_size = args.data.image_size # (直接是8)  <--- 修正这里
     # DiT_models 是在 models.py 文件末尾定义的一个 Python 字典 (dict)
     # 它的键 (Key) 是字符串，比如 "DiT-XL/2" 或 "DiT-B/4"
     # 它的值 (Value) 并不是字符串，而是 函数对象（构造函数）
@@ -238,7 +238,16 @@ def main(args):
     # [新增] 定义余弦退火调度器
     # 假设 epochs=1400，它会让学习率从 1e-4 平滑下降到 1e-6
     # [修改] args.training.epochs
-    scheduler = CosineAnnealingLR(opt, T_max=args.training.epochs, eta_min=1e-6)
+    # [修改] 根据配置决定是否使用学习率调度器
+    scheduler = None
+    # 使用 getattr 提供默认值 "constant"，防止旧配置文件报错
+    scheduler_type = getattr(args.training, "lr_scheduler", "constant")
+    
+    if scheduler_type == "cosine":
+        logger.info("Using Cosine Annealing Learning Rate Scheduler.")
+        scheduler = CosineAnnealingLR(opt, T_max=args.training.epochs, eta_min=1e-6)
+    else:
+        logger.info("Using Constant Learning Rate (No Scheduler).")
 
     # Setup data:
     transform = transforms.Compose([
@@ -361,8 +370,9 @@ def main(args):
                     logger.info(f"Saved checkpoint to {checkpoint_path}")
                 dist.barrier()
 
-        # [新增] 每个 Epoch 结束时更新学习率
-        scheduler.step()
+        # [修改] 只有当调度器存在时才更新
+        if scheduler is not None:
+            scheduler.step()
 
     model.eval()  # important! This disables randomized embedding dropout
     # do any sampling/FID calculation/etc. with ema (or model) in eval mode ...
